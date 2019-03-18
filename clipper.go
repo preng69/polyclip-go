@@ -56,20 +56,36 @@ type clipper struct {
 	eventQueue
 }
 
-func (c *clipper) compute(operation Op) Polygon {
+func (c *clipper) compute(operation Op) (result Polygon) {
+	defer func() {
+		// Fallback to adding all polygons together if UNION fails
+		if len(result) == 0 && operation == UNION {
+			if len(c.subject) > 0 {
+				result = c.subject.Clone()
+			}
+			for _, cont := range c.clipping {
+				result.Add(cont.Clone())
+			}
+			return
+		}
+	}()
 
 	// Test 1 for trivial result case
 	if len(c.subject)*len(c.clipping) == 0 {
 		switch operation {
 		case DIFFERENCE:
-			return c.subject.Clone()
+			result = c.subject.Clone()
+			return
 		case UNION:
 			if len(c.subject) == 0 {
-				return c.clipping.Clone()
+				result = c.clipping.Clone()
+				return
 			}
-			return c.subject.Clone()
+			result = c.subject.Clone()
+			return
 		}
-		return Polygon{}
+		result = Polygon{}
+		return
 	}
 
 	// Test 2 for trivial result case
@@ -78,15 +94,17 @@ func (c *clipper) compute(operation Op) Polygon {
 	if !subjectbb.Overlaps(clippingbb) {
 		switch operation {
 		case DIFFERENCE:
-			return c.subject.Clone()
+			result = c.subject.Clone()
+			return
 		case UNION:
-			result := c.subject.Clone()
+			result = c.subject.Clone()
 			for _, cont := range c.clipping {
 				result.Add(cont.Clone())
 			}
-			return result
+			return
 		}
-		return Polygon{}
+		result = Polygon{}
+		return
 	}
 
 	numSegments := 0
@@ -127,9 +145,11 @@ func (c *clipper) compute(operation Op) Polygon {
 			}
 			fmt.Fprintf(f, "subject: %#v,\nclipping: %#v\n,", c.subject, c.clipping)
 			f.Close()
-			panic("polyclip.compute: infinite loop. " +
-				"Writing geometries to file polyclipError.log. " +
+			fmt.Fprintf(f, "polyclip.compute: infinite loop. "+
+				"Writing geometries to file polyclipError.log. "+
 				"Please report this issue at github.com/ctessum/polyclip-go.")
+			result = Polygon{}
+			return
 		}
 		i++
 
@@ -142,7 +162,8 @@ func (c *clipper) compute(operation Op) Polygon {
 		case operation == INTERSECTION && e.p.X > MINMAX_X:
 			fallthrough
 		case operation == DIFFERENCE && e.p.X > subjectbb.Max.X:
-			return connector.toPolygon()
+			result = connector.toPolygon()
+			return
 			//case operation == UNION && e.p.X > MINMAX_X:
 			//	_DBG(func() { fmt.Print("\nUNION optimization, fast quit\n") })
 			//	// add all the non-processed line segments to the result
@@ -290,7 +311,8 @@ func (c *clipper) compute(operation Op) Polygon {
 			}
 		})
 	}
-	return connector.toPolygon()
+	result = connector.toPolygon()
+	return
 }
 
 var nanPoint Point
